@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(mkdir *)",
+      "Bash(npx *)",
+      "Bash(npm run *)",
+      "Bash(findstr *)",
+      "Bash(npm init *)"
+    ]
+  },
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ]
+    }
+  },
+  "skills": [
+    "react-expert",
+    "typescript-pro",
+    "javascript-pro",
+    "nextjs-developer",
+    "playwright-expert",
+    "nestjs-expert",
+    "api-designer",
+    "fullstack-guardian",
+    "postgres-pro",
+    "sql-pro",
+    "database-optimizer",
+    "architecture-designer",
+    "microservices-architect",
+    "code-reviewer",
+    "security-reviewer",
+    "secure-code-guardian",
+    "test-master",
+    "debugging-wizard",
+    "devops-engineer",
+    "monitoring-expert",
+    "feature-forge",
+    "code-documenter",
+    "spec-miner",
+    "prompt-engineer",
+    "the-fool"
+  ],
+  "$version": 3
+}

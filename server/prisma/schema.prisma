@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Dataset {
+  id             String          @id @default(uuid())
+  name           String
+  resource_url   String
+  format         String
+  struct_config  Json?           // Для XPath кореня або інших конфігів
+  field_config   Json?           // Конфігурація полів: { fieldCode: { displayName, visible, order } }
+  auto_sync      Boolean         @default(false)
+  cron_schedule  String?
+  created_at     DateTime        @default(now())
+
+  import_jobs    ImportJob[]
+  records        DatasetRecord[]
+}
+
+model ImportJob {
+  id           String          @id @default(uuid())
+  dataset_id   String
+  status       String          @default("PENDING") // PENDING, DOWNLOADING, PROCESSING, COMPLETED, FAILED
+  total_rows   Int             @default(0)
+  success_rows Int             @default(0)
+  error_rows   Int             @default(0)
+  started_at   DateTime        @default(now())
+  completed_at DateTime?
+
+  dataset      Dataset         @relation(fields: [dataset_id], references: [id], onDelete: Cascade)
+  errors       ImportError[]
+  records      DatasetRecord[]
+}
+
+model DatasetRecord {
+  id            String    @id @default(uuid())
+  import_job_id String
+  dataset_id    String
+  data          Json
+  created_at    DateTime  @default(now())
+
+  import_job    ImportJob @relation(fields: [import_job_id], references: [id], onDelete: Cascade)
+  dataset       Dataset   @relation(fields: [dataset_id], references: [id], onDelete: Cascade)
+}
+
+model ImportError {
+  id            String    @id @default(uuid())
+  import_job_id String
+  row_index     Int
+  raw_data      Json?
+  error_message String
+
+  import_job    ImportJob @relation(fields: [import_job_id], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String?  // Nullable for OAuth users
+  first_name    String?
+  last_name     String?
+  avatar_url    String?
+  provider      String   @default("local") // local, google, facebook
+  provider_id   String?  @unique
+  role          String   @default("user") // admin, user
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+}
