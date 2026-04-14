@@ -3,6 +3,8 @@ import { AuthProvider } from './context/AuthContext';
 import AdminRoute from './components/AdminRoute';
 import AdminLayout from './components/AdminLayout';
 import HomePage from './pages/HomePage';
+import DatasetsPage from './pages/DatasetsPage';
+import DatasetDetailPage from './pages/DatasetDetailPage';
 import Dashboard from './pages/Dashboard';
 import Datasets from './pages/Datasets';
 import DataViewer from './pages/DataViewer';
@@ -28,11 +30,14 @@ function App() {
         <Routes>
           {/* Public routes */}
           <Route path="/" element={<HomePage />} />
+          <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           
           {/* Public dataset viewer */}
+          <Route path="/datasets" element={<DatasetsPage />} />
+          <Route path="/datasets/:id" element={<DatasetDetailPage />} />
           <Route path="/datasets/:id/records" element={<DataViewerLayout />} />
           
           {/* Admin-only routes */}

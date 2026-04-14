@@ -6,7 +6,8 @@
       "Bash(npx *)",
       "Bash(npm run *)",
       "Bash(findstr *)",
-      "Bash(npm init *)"
+      "Bash(npm init *)",
+      "Bash(npm test *)"
     ]
   },
   "mcpServers": {

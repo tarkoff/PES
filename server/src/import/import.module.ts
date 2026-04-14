@@ -8,7 +8,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 @Module({
   imports: [
     PrismaModule,
-    HttpModule,
+    HttpModule.register({
+      timeout: 300_000,
+      maxRedirects: 5,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    }),
     BullModule.registerQueue({
       name: 'import-queue',
     }),

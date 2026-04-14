@@ -66,17 +66,21 @@ export default function DataViewer() {
     try {
       const res = await apiClient.get(`/datasets/${id}/records?page=${page}&limit=${limit}`);
       let processedData = res.data.data;
-      
+
+      // Handle edge case where data might be wrapped in an array
       if (processedData.length === 1 && Array.isArray(processedData[0])) {
         processedData = processedData[0];
       }
-      
+
       setData(processedData);
       setTotal(res.data.total);
-      
+
       if (processedData.length > 0) {
         const firstItem = processedData[0];
+        
+        // Check if data items are objects (normal case) or primitives
         if (typeof firstItem === 'object' && firstItem !== null && !Array.isArray(firstItem)) {
+          // Extract all unique keys from ALL records (not just first page)
           const keys = new Set<string>();
           processedData.forEach((item: any) => {
             if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
@@ -85,6 +89,8 @@ export default function DataViewer() {
           });
           const cols = Array.from(keys);
           setRawColumns(cols);
+          
+          // Initialize field configs only if not loaded from server
           if (!serverConfigLoaded.current && Object.keys(fieldConfigs).length === 0) {
             const initialConfigs: Record<string, FieldConfig> = {};
             cols.forEach((col, idx) => {
@@ -92,12 +98,27 @@ export default function DataViewer() {
             });
             setFieldConfigs(initialConfigs);
           }
+        } else if (Array.isArray(firstItem)) {
+          // Data is still wrapped in arrays - unwrap it
+          const unwrappedData = processedData.flatMap((item: any) => 
+            Array.isArray(item) ? item : [item]
+          );
+          setData(unwrappedData);
+          
+          const keys = new Set<string>();
+          unwrappedData.forEach((item: any) => {
+            if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+              Object.keys(item).forEach(k => keys.add(k));
+            }
+          });
+          setRawColumns(Array.from(keys));
         } else {
+          // Primitive values (strings, numbers)
           setRawColumns(['value']);
         }
       }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to fetch data:', e);
     } finally {
       setLoading(false);
     }
@@ -226,8 +247,18 @@ export default function DataViewer() {
                     if (value === null || value === undefined) {
                       return <span className="text-gray-600/50">-</span>;
                     }
-                    if (typeof value === 'object') {
-                      return JSON.stringify(value);
+                    if (typeof value === 'object' && !Array.isArray(value)) {
+                      // Render nested object as formatted JSON
+                      return (
+                        <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-all bg-white/5 p-2 rounded">
+                          {JSON.stringify(value, null, 2)}
+                        </pre>
+                      );
+                    }
+                    if (Array.isArray(value)) {
+                      // Render arrays as comma-separated or JSON
+                      const str = JSON.stringify(value);
+                      return str.length > 100 ? str.slice(0, 100) + '...' : str;
                     }
                     return String(value);
                   };
@@ -236,7 +267,7 @@ export default function DataViewer() {
                     // Single column for primitive values
                     return (
                       <tr key={i} className="hover:bg-white/5 transition-colors group">
-                        <td className="px-6 py-3 whitespace-nowrap max-w-xs truncate text-gray-400 group-hover:text-gray-200 transition-colors" title={typeof renderCell(row) === 'string' ? (renderCell(row) as string) : undefined}>
+                        <td className="px-6 py-3 whitespace-pre-wrap max-w-md break-all text-gray-400 group-hover:text-gray-200 transition-colors">
                           {renderCell(row)}
                         </td>
                       </tr>
@@ -248,9 +279,9 @@ export default function DataViewer() {
                         {displayColumns.map(col => {
                           const cellValue = row[col.code];
                           const cellText = renderCell(cellValue);
-                          const title = typeof cellValue === 'object' ? JSON.stringify(cellValue) : String(cellValue ?? '');
+                          const title = typeof cellValue === 'object' ? JSON.stringify(cellValue, null, 2) : String(cellValue ?? '');
                           return (
-                            <td key={col.code} className="px-6 py-3 whitespace-nowrap max-w-xs truncate text-gray-400 group-hover:text-gray-200 transition-colors" title={title}>
+                            <td key={col.code} className="px-6 py-3 max-w-md break-words text-gray-400 group-hover:text-gray-200 transition-colors" title={title}>
                               {cellText}
                             </td>
                           );

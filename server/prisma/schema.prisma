@@ -45,6 +45,11 @@ model DatasetRecord {
 
   import_job    ImportJob @relation(fields: [import_job_id], references: [id], onDelete: Cascade)
   dataset       Dataset   @relation(fields: [dataset_id], references: [id], onDelete: Cascade)
+
+  @@index([dataset_id, created_at(sort: Desc)])
+  @@index([import_job_id])
+  // Note: GIN index on data field is created via raw SQL migration
+  // See: prisma/migrations/20260414_jsonb_optimization/migration.sql
 }
 
 model ImportError {

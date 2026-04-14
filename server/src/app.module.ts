@@ -9,6 +9,7 @@ import { ImportModule } from './import/import.module';
 import { DatasetModule } from './dataset/dataset.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
+import { DatabaseModule } from './database/database.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { UserModule } from './user/user.module';
     DatasetModule,
     AuthModule,
     UserModule,
+    DatabaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],

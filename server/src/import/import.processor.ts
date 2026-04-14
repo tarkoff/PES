@@ -8,7 +8,8 @@ import { parseXmlStream } from './parsers/xml.parser';
 import { parseXlsxStream } from './parsers/xlsx.parser';
 import { parseCsvStream } from './parsers/csv.parser';
 import * as unzipper from 'unzipper';
-import { Readable, PassThrough } from 'stream';
+import { Readable } from 'stream';
+import { firstValueFrom } from 'rxjs';
 
 @Processor('import-queue')
 export class ImportProcessor extends WorkerHost {
@@ -20,16 +21,15 @@ export class ImportProcessor extends WorkerHost {
 
   async process(job: Job<any, any, string>): Promise<any> {
     const { jobId, datasetUrl, format, structConfig, datasetId } = job.data;
-    
+
     this.logger.log(`Starting import job ${jobId} from ${datasetUrl} (format: ${format})`);
-    
-    // Validate URL
+
     try {
       new URL(datasetUrl);
     } catch {
-      throw new Error(`Invalid URL: ${datasetUrl}. Please provide a valid full URL starting with http:// or https://`);
+      throw new Error(`Invalid URL: ${datasetUrl}`);
     }
-    
+
     await this.prisma.importJob.update({
       where: { id: jobId },
       data: { status: 'DOWNLOADING' },
@@ -41,32 +41,25 @@ export class ImportProcessor extends WorkerHost {
         where: { dataset_id: datasetId },
       });
 
-      // 2. Скачуємо файл потоком
-      const response = await this.httpService.axiosRef({
-        method: 'GET',
-        url: datasetUrl,
-        responseType: 'stream',
-      });
+      // 2. Скачуємо файл з retry логікою
+      const { stream, headers } = await this.downloadWithRetry(datasetUrl, jobId);
 
       await this.prisma.importJob.update({
         where: { id: jobId },
         data: { status: 'PROCESSING' },
       });
 
-      const rawStream: Readable = response.data;
-
       // 3. Визначаємо, чи є це ZIP-архів:
-      // Перевіряємо Content-Type або суфікс URL:
-      const contentType: string = response.headers['content-type'] || '';
+      const contentType: string = headers['content-type'] || '';
       const isZip =
         contentType.includes('zip') ||
         datasetUrl.toLowerCase().split('?')[0].endsWith('.zip');
 
       if (isZip) {
         this.logger.log(`Detected ZIP archive for job ${jobId}, extracting...`);
-        await this.processZipStream(rawStream, jobId, datasetId, format, structConfig);
+        await this.processZipStream(stream, jobId, datasetId, format, structConfig);
       } else {
-        await this.parseStream(rawStream, jobId, datasetId, format, structConfig);
+        await this.parseStream(stream, jobId, datasetId, format, structConfig);
       }
 
       await this.prisma.importJob.update({
@@ -86,8 +79,69 @@ export class ImportProcessor extends WorkerHost {
   }
 
   /**
-   * Витягує першый XML або JSON файл із ZIP-архіву і передає його потоково у парсер.
+   * Завантажує файл з retry логікою для transient помилок
    */
+  private async downloadWithRetry(url: string, jobId: string, maxRetries = 3): Promise<{ stream: Readable; headers: Record<string, any> }> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        this.logger.log(`Download attempt ${attempt}/${maxRetries} for job ${jobId}`);
+        return await this.downloadFile(url);
+      } catch (err: any) {
+        lastError = err;
+        const isTransient =
+          err.message?.includes('aborted') ||
+          err.message?.includes('ECONNRESET') ||
+          err.message?.includes('ETIMEDOUT') ||
+          err.message?.includes('socket hang up') ||
+          err.code === 'ECONNRESET' ||
+          err.code === 'ETIMEDOUT';
+
+        if (isTransient && attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+          this.logger.warn(`Download failed (attempt ${attempt}): ${err.message}. Retrying in ${delay}ms...`);
+          await new Promise((r) => setTimeout(r, delay));
+        } else if (!isTransient) {
+          throw err;
+        }
+      }
+    }
+
+    throw lastError || new Error('Download failed after retries');
+  }
+
+  /**
+   * Завантажує файл через axios
+   */
+  private async downloadFile(url: string): Promise<{ stream: Readable; headers: Record<string, any> }> {
+    const response$ = this.httpService.get(url, {
+      responseType: 'stream',
+      timeout: 300_000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      decompress: true,
+      headers: {
+        'User-Agent': 'DataGovUA-Importer/1.0',
+      },
+    });
+
+    const response = await firstValueFrom(response$);
+    const stream: Readable = response.data;
+
+    // Перевіряємо, чи відповід дійсно успішний
+    const status = response.status;
+    if (status >= 400) {
+      stream.destroy();
+      throw new Error(`HTTP ${status}: ${response.statusText || 'Error'}`);
+    }
+
+    return {
+      stream,
+      headers: response.headers,
+    };
+  }
+
   private async processZipStream(
     zipStream: Readable,
     jobId: string,
@@ -108,7 +162,7 @@ export class ImportProcessor extends WorkerHost {
 
         if (!handled && matchedExt) {
           handled = true;
-          const detectedFormat = matchedExt === 'xlsx' || matchedExt === 'xls' ? matchedExt : matchedExt;
+          const detectedFormat = matchedExt;
 
           this.logger.log(`Extracting file from ZIP: ${entry.path} (format: ${detectedFormat})`);
 
@@ -119,7 +173,6 @@ export class ImportProcessor extends WorkerHost {
             reject(err);
           }
         } else {
-          // Пропускаємо непотрібні записи
           entry.autodrain();
         }
       });
@@ -141,7 +194,40 @@ export class ImportProcessor extends WorkerHost {
     structConfig: any,
   ): Promise<void> {
     const fmt = format.toLowerCase();
+    
+    // Handle JSON with JSONL variant
     if (fmt === 'json') {
+      // Check if structConfig specifies JSON Lines format
+      const isJsonLines = structConfig?.json_lines || structConfig?.jsonLines;
+      const formatForParser = isJsonLines ? 'jsonl' : 'json';
+      await this.routeToParser(stream, jobId, datasetId, formatForParser, structConfig);
+    } else if (fmt === 'jsonl' || fmt === 'ndjson') {
+      // Explicit JSON Lines format
+      await this.routeToParser(stream, jobId, datasetId, 'jsonl', structConfig);
+    } else if (fmt === 'xml') {
+      await parseXmlStream(stream, jobId, datasetId, this.prisma, structConfig);
+    } else if (['xls', 'xlsx'].includes(fmt)) {
+      await parseXlsxStream(stream, jobId, datasetId, this.prisma, structConfig);
+    } else if (fmt === 'csv') {
+      await parseCsvStream(stream, jobId, datasetId, this.prisma, structConfig);
+    } else {
+      throw new Error(`Unsupported format: ${format}`);
+    }
+  }
+
+  /**
+   * Routes to the appropriate parser based on format string.
+   */
+  private async routeToParser(
+    stream: any,
+    jobId: string,
+    datasetId: string,
+    format: string,
+    structConfig: any,
+  ): Promise<void> {
+    const fmt = format.toLowerCase();
+    
+    if (fmt === 'json' || fmt === 'jsonl') {
       await parseJsonStream(stream, jobId, datasetId, this.prisma, structConfig);
     } else if (fmt === 'xml') {
       await parseXmlStream(stream, jobId, datasetId, this.prisma, structConfig);
